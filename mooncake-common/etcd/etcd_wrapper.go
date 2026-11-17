@@ -51,6 +51,23 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// getenv reads the variable from libc's environ at call time.
+//
+// Go's os.Getenv reads a snapshot (syscall.envs) taken when the Go runtime
+// starts: for a c-shared library that is the moment the host process dlopens
+// this .so. Values set afterwards (e.g. os.environ updates from Python after
+// import) or an environment block rewritten by the host (setproctitle) are
+// invisible to os.Getenv, silently dropping the TLS config. libc getenv always
+// observes the live environment.
+func getenv(name string) string {
+	cName := C.CString(name)
+	defer C.free(unsafe.Pointer(cName))
+	if v := C.getenv(cName); v != nil {
+		return C.GoString(v)
+	}
+	return ""
+}
+
 // prefixWatchInfo stores cancel function and callback context for a prefix watch
 type prefixWatchInfo struct {
 	cancel          context.CancelFunc
@@ -200,7 +217,7 @@ func parseRbacCredentialsFile(path string) (string, string, error) {
 // the process log without interfering with the shared-library stdout contract.
 func loadSecurityConfig() {
 	// --- RBAC credentials from file ---
-	credsFile := os.Getenv("MC_ETCD_CONF_FILE")
+	credsFile := getenv("MC_ETCD_CONF_FILE")
 	if credsFile != "" {
 		username, password, err := parseRbacCredentialsFile(credsFile)
 		if err != nil {
@@ -214,7 +231,7 @@ func loadSecurityConfig() {
 	}
 
 	// --- TLS configuration (one-way: verify server) ---
-	caCertFile := os.Getenv("MC_ETCD_TLS_CA_CERT")
+	caCertFile := getenv("MC_ETCD_TLS_CA_CERT")
 	if caCertFile == "" {
 		// No TLS configured — this is fine, plaintext is the default.
 		cachedSecurity.loaded = true
@@ -241,13 +258,13 @@ func loadSecurityConfig() {
 	}
 
 	// Optional: override the server name used for SNI and hostname verification.
-	if serverName := os.Getenv("MC_ETCD_TLS_SERVER_NAME"); serverName != "" {
+	if serverName := getenv("MC_ETCD_TLS_SERVER_NAME"); serverName != "" {
 		tlsCfg.ServerName = serverName
 		fmt.Fprintf(os.Stderr, "[etcd_wrapper] TLS ServerName override: %s\n", serverName)
 	}
 
 	// Optional: skip certificate verification (testing only).
-	if os.Getenv("MC_ETCD_TLS_INSECURE_SKIP_VERIFY") == "true" {
+	if getenv("MC_ETCD_TLS_INSECURE_SKIP_VERIFY") == "true" {
 		tlsCfg.InsecureSkipVerify = true
 		fmt.Fprintf(os.Stderr, "[etcd_wrapper] WARNING: TLS InsecureSkipVerify is enabled — not safe for production\n")
 	}
